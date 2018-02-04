@@ -1,0 +1,153 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+from lifelines import KaplanMeierFitter
+from lifelines.statistics import logrank_test, multivariate_logrank_test, pairwise_logrank_test
+from lifelines.utils import survival_table_from_events
+from lifelines.plotting import add_at_risk_counts
+from lifelines import CoxPHFitter
+
+
+data = pd.read_csv('couples.csv', sep = ',',na_values = '.', decimal = '.', encoding =  'utf-8')
+
+#Recodage des Données
+#Facteur avec que deux catégories en binaire
+
+dic = {
+    'Oui' : 1,
+    'Non' : 0
+}
+data.cryptorchidie = data.cryptorchidie.map(dic)
+
+#Durée entre la première consultation et la date de conception pour ceux ayant eu un enfant
+
+data.dconsultation = pd.to_datetime(data.dconsultation)
+data.dconception = pd.to_datetime(data.dconception)
+data.ddn = pd.to_datetime(data.ddn)
+
+data['delta_consult_concep'] = abs((data.dconception - data.dconsultation)/np.timedelta64(1, 'M'))
+data['delta_consult_ddn'] = (data.ddn - data.dconsultation)/np.timedelta64(1, 'M')
+data['duree_totale_du_programme'] = [i if not np.isnan(i) else j for i,j in zip(data['delta_consult_concep'],data['delta_consult_ddn'])]
+
+#Certaine date de conception sont antérieures à la date de la conultation. Il s'agit de données abérrantes, 
+#il faudra les supprimer
+data.duree_totale_du_programme[32]
+
+#Recodage pathologie
+
+dico = {'non': 'non',
+ 'chimiotherapie': 'chimiotherapie',
+ 'neurologique' : 'probleme neurologique',
+ 'hodgkin , chimiotherapie , radiotherapie': 'chimiotherapie',
+ 'sinusites chroniques' : 'probleme respiratoire',
+ 'sarcome , chimiotherapie': 'chimiotherapie',
+ 'cancer testis , chimiotherapie' : 'chimiotherapie',
+ 'pathologies respiratoire chroniques': 'probleme respiratoire',
+ 'sinusites chroniques , pathologies respiratoire chroniques': 'probleme respiratoire',
+ 'chimiotherapie , radiotherapie' : 'chimiotherapie',
+ 'autre' : 'autre',
+ 'diabete' : 'diabete'}
+data.patho_h = data.patho_h.map(dico)
+
+#Variable IsPath homme
+
+dicoIsPathoH = {elem:0 if elem == 'non' else 1 for elem in list(set(data.patho_h))}
+data['isPathoH'] = data.patho_h.map(dicoIsPathoH)
+
+#Variable IsPath femme
+
+catPathoF = list(set(data.patho_f))
+catPathoF = [x for x in catPathoF if str(x) != 'nan']
+dicoIsPathoF = {elem:0 if elem == 'non' else 1 for elem in catPathoF}
+data['isPathoF'] = data.patho_f.map(dicoIsPathoF)
+
+# L'homme a t'il un problème de santé impactant sa fécondité? Idem pour la femme
+
+pbFemme = [1 if (pat == 1) | (ct == 'dysovulation') | (ct == 'anovulation') | (bh=='anormal') \
+           else 0 for (ct,pat,bh) in zip(data.ct_f, data.isPathoF, data.bh_f)]
+data['pb_F'] = pbFemme
+
+pbHomme = [1 if (pat == 1) | (cr == 1) | (sp == 'azoo') | (sp=='anormal') \
+           else 0 for (cr,pat,sp) in zip(data.cryptorchidie, data.isPathoH, data.spermo)]
+data['pb_H'] = pbHomme
+
+#bmi_h
+data.bmi_h = data.bmi_h.fillna(data['bmi_h'].mean())
+
+#age_f
+data.age_f = data.age_f.fillna(data['age_f'].mean())
+
+#data_cont=data[['age_h','bmi_h','age_f','cryptorchidie','duree_infertilite','delta_consult_concep','delta_consult_ddn','duree_totale_du_programme','isPathoH','isPathoF','pb_F','pb_H']].dropna()
+
+numerical_features = data.dtypes.index[data.dtypes != 'object']
+numerical_features = [f for f in numerical_features if f not in ['id','enfant'] ] #Remove the target and the id
+target = data.enfant
+numerical_data = data[numerical_features]
+#print('Le jeu de donnée est constitué de ' + str(data.shape[0]) + ' enregistrements comportant ' + str(data.shape[1]) + \
+      #' variables numériques et '+ str(categorical_data.shape[1])+ ' variables catégorielles.')
+
+#data_cont = data[data.dtypes.index[data.dtypes != 'object']]
+#data_cont.head()
+
+
+#description des données
+numerical_data.describe()
+#data.describe(include='age_h,bmi_h, include='age_f')
+
+
+
+kmf = KaplanMeierFitter()
+T=data['duree_totale_du_programme']
+E=data['enfant']
+
+#estimation de la survie KM
+
+df1=kmf.fit(T, event_observed=E)
+table = survival_table_from_events(T, E, intervals=None)
+print(df1,kmf.median_)
+print(table.head())
+print(kmf.survival_function_.head())
+
+# représentation de la courbe de survie KM avec IC
+kmf.plot(title='Fonction de survie',ylim=(0, 1))
+plt.show()
+
+# sans les IC
+kmf.survival_function_.plot(title='Fonction de survie sans IC',ylim=(0, 1))
+plt.show()
+
+# Test du log-rank sur le traitement 
+
+trait_types = data['traitement']
+results=multivariate_logrank_test(T,trait_types,E)
+results.print_summary()
+
+
+# Courbes de survie selon le traitement
+
+ax = plt.subplot(111)
+trait_types = data['traitement'].unique()
+
+for i,trait_type in enumerate(trait_types):
+    #ax = plt.subplot(2, 3, i+1)
+    ix = data['traitement'] == trait_type
+    ax=kmf.fit( T[ix], E[ix], label=trait_type).plot(ax=ax,ci_show=False)
+    add_at_risk_counts(kmf, ax=ax)
+
+plt.show()
+
+#binariser le traitement
+data['traitement']=pd.get_dummies(data['traitement'])
+
+df=data[['enfant','duree_totale_du_programme','age_h','age_f']]
+cph = CoxPHFitter()
+cph.fit(df, duration_col='duree_totale_du_programme', event_col='enfant')
+cph.print_summary()
+#cph.baseline_hazard_
+#cph._log_likelihood
+cph.plot()
+plt.show()
+
+#cph.predict_partial_hazard(df.drop(["duree_totale_du_programme", "enfant"], axis=1))
+#cph.predict_survival_function(df.drop(["duree_totale_du_programme", "enfant"], axis=1))
