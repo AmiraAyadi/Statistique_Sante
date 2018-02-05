@@ -1,0 +1,48 @@
+appli<-read.csv('donnees_fixe_2.csv',sep = ';',header=T)
+attach(appli)
+appli
+trtt=traitement
+# chargement des packages
+library(survival)
+library(splines)
+
+# estimation de la survie KM
+fits=survfit(Surv(duree_totale_du_programme,enfant)~1)
+fits
+summary(fits)
+
+# représentation de la courbe de survie KM
+plot(fits,xlab='duree', ylab="taux")
+# sans les IC
+plot(survfit(Surv(duree_totale_du_programme,enfant)~1,conf.type="none"),
+     xlab="duree",ylab="taux")
+
+# survie par traitement
+survfit(Surv(duree_totale_du_programme,enfant)~trtt)
+summary(survfit(Surv(duree_totale_du_programme,enfant)~trtt))
+# Test du log-rank 
+survdiff(Surv(duree_totale_du_programme,enfant)~trtt)
+# Courbes de survie selon le traitement
+plot(survfit(Surv(duree_totale_du_programme,enfant)~trtt,conf.type="none"),
+     xlab='duree',ylab="taux")
+plot(survfit(Surv(duree_totale_du_programme,enfant)~trtt,conf.type="none"),
+     xlab='duree',ylab="taux",lty=1:3)
+
+# modele de Cox
+options(contrasts=c("contr.SAS","contr.SAS"))
+options(contrasts=c("contr.treatment","contr.treatment"))
+modele<-coxph(Surv(duree_totale_du_programme,enfant)~trtt)
+modele
+summary(modele)
+anova(modele)
+diag<-cox.zph(modele)
+diag
+plot(diag)
+
+cox.all = coxph(Surv(duree_totale_du_programme,enfant)~trtt+age_h)
+summary(cox.all)
+anova(cox.all)
+cox.back<-step(cox.all,direction="backward")
+summary(cox.back)
+anova(cox.back)
+
